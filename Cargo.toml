@@ -1,6 +1,6 @@
 [package]
 name = "hvm"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 description = "A lazy, beta-optimal, massively-parallel, non-garbage-collected and strongly-confluent functional compilation target."
 repository = "https://github.com/Kindelia/HVM"
@@ -18,7 +18,11 @@ name = "hvm"
 test = false
 
 [dependencies]
-num_cpus = "1.13"
 itertools = "0.10"
+num_cpus = "1.13"
+regex = "1.5.4"
 nom = "7.1"
 nom_locate = "4.0"
+
+[dev-dependencies]
+proptest = "1.0"

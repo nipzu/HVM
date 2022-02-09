@@ -3,15 +3,19 @@
 // in parallel with -lpthreads.
 
 #include <assert.h>
-
-#include <pthread.h>
-#include <stdatomic.h>
+#include <stdint.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 
-#define PARALLEL
+/*! GENERATED_PARALLEL_FLAG !*/
+
+#ifdef PARALLEL
+#include <pthread.h>
+#include <stdatomic.h>
+#endif
 
 #define LIKELY(x) __builtin_expect((x), 1)
 #define UNLIKELY(x) __builtin_expect((x), 0)
@@ -19,33 +23,41 @@
 // Types
 // -----
 
-// TODO: stdint.h
-typedef unsigned char u8;
-typedef unsigned int u32;
-typedef unsigned long long int u64;
+typedef uint8_t u8;
+typedef uint32_t u32;
+typedef uint64_t u64;
+
+#ifdef PARALLEL
 typedef pthread_t Thd;
+#endif
 
 // Consts
 // ------
 
-const u64 U64_PER_KB = 0x80;
-const u64 U64_PER_MB = 0x20000;
-const u64 U64_PER_GB = 0x8000000;
+#define U64_PER_KB (0x80)
+#define U64_PER_MB (0x20000)
+#define U64_PER_GB (0x8000000)
 
 // HVM pointers can address a 2^32 space of 64-bit elements, so, when the
 // program starts, we pre-alloc the maximum addressable heap, 32 GB. This will
 // be replaced by a proper arena allocator soon (see the Issues)!
-const u64 HEAP_SIZE = 8 * U64_PER_GB * sizeof(u64);
+#define HEAP_SIZE (8 * U64_PER_GB * sizeof(u64))
 
 #ifdef PARALLEL
-#define MAX_WORKERS (/* GENERATED_NUM_THREADS_CONTENT */)
+#define MAX_WORKERS (/*! GENERATED_NUM_THREADS */ 0 /* GENERATED_NUM_THREADS !*/)
 #else
 #define MAX_WORKERS (1)
 #endif
-const u64 MAX_DYNFUNS = 65536;
+
+#define MAX_DYNFUNS (65536)
 #define MAX_ARITY (16)
-const u64 MEM_SPACE = HEAP_SIZE/MAX_WORKERS/sizeof(u64); // each worker has a fraction of the 32GB total
+
+// Each worker has a fraction of the total.
+#define MEM_SPACE (HEAP_SIZE/sizeof(u64)/MAX_WORKERS)
 #define NORMAL_SEEN_MCAP (HEAP_SIZE/sizeof(u64)/(sizeof(u64)*8))
+
+// Max different colors we're able to readback
+#define DIRS_MCAP (0x10000)
 
 // Terms
 // -----
@@ -58,46 +70,50 @@ const u64 MEM_SPACE = HEAP_SIZE/MAX_WORKERS/sizeof(u64); // each worker has a fr
 
 typedef u64 Lnk;
 
-const u64 VAL = 1;
-const u64 EXT = 0x100000000; 
-const u64 ARI = 0x100000000000000;
-const u64 TAG = 0x1000000000000000;
+#define VAL ((u64) 1)
+#define EXT ((u64) 0x100000000)
+#define ARI ((u64) 0x100000000000000)
+#define TAG ((u64) 0x1000000000000000)
 
-const u64 DP0 = 0x0; // points to the dup node that binds this variable (left side)
-const u64 DP1 = 0x1; // points to the dup node that binds this variable (right side)
-const u64 VAR = 0x2; // points to the λ that binds this variable
-const u64 ARG = 0x3; // points to the occurrence of a bound variable a linear argument
-const u64 ERA = 0x4; // signals that a binder doesn't use its bound variable
-const u64 LAM = 0x5; // arity = 2
-const u64 APP = 0x6; // arity = 2
-const u64 PAR = 0x7; // arity = 2 // TODO: rename to SUP
-const u64 CTR = 0x8; // arity = user defined
-const u64 CAL = 0x9; // arity = user defined
-const u64 OP2 = 0xA; // arity = 2
-const u64 U32 = 0xB; // arity = 0 (unboxed)
-const u64 F32 = 0xC; // arity = 0 (unboxed)
-const u64 NIL = 0xF; // not used
+#define DP0 (0x0) // points to the dup node that binds this variable (left side)
+#define DP1 (0x1) // points to the dup node that binds this variable (right side)
+#define VAR (0x2) // points to the λ that binds this variable
+#define ARG (0x3) // points to the occurrence of a bound variable a linear argument
+#define ERA (0x4) // signals that a binder doesn't use its bound variable
+#define LAM (0x5) // arity = 2
+#define APP (0x6) // arity = 2
+#define PAR (0x7) // arity = 2 // TODO: rename to SUP
+#define CTR (0x8) // arity = user defined
+#define CAL (0x9) // arity = user defined
+#define OP2 (0xA) // arity = 2
+#define U32 (0xB) // arity = 0 (unboxed)
+#define F32 (0xC) // arity = 0 (unboxed)
+#define NIL (0xF) // not used
 
-const u64 ADD = 0x0;
-const u64 SUB = 0x1;
-const u64 MUL = 0x2;
-const u64 DIV = 0x3;
-const u64 MOD = 0x4;
-const u64 AND = 0x5;
-const u64 OR  = 0x6;
-const u64 XOR = 0x7;
-const u64 SHL = 0x8;
-const u64 SHR = 0x9;
-const u64 LTN = 0xA;
-const u64 LTE = 0xB;
-const u64 EQL = 0xC;
-const u64 GTE = 0xD;
-const u64 GTN = 0xE;
-const u64 NEQ = 0xF;
+#define ADD (0x0)
+#define SUB (0x1)
+#define MUL (0x2)
+#define DIV (0x3)
+#define MOD (0x4)
+#define AND (0x5)
+#define OR  (0x6)
+#define XOR (0x7)
+#define SHL (0x8)
+#define SHR (0x9)
+#define LTN (0xA)
+#define LTE (0xB)
+#define EQL (0xC)
+#define GTE (0xD)
+#define GTN (0xE)
+#define NEQ (0xF)
 
 //GENERATED_CONSTRUCTOR_IDS_START//
-/* GENERATED_CONSTRUCTOR_IDS_CONTENT */
+/*! GENERATED_CONSTRUCTOR_IDS !*/
 //GENERATED_CONSTRUCTOR_IDS_END//
+
+#ifndef _MAIN_
+#define _MAIN_ (0)
+#endif
 
 // Threads
 // -------
@@ -492,7 +508,7 @@ Lnk reduce(Worker* mem, u64 root, u64 slen) {
           switch (fun)
           //GENERATED_REWRITE_RULES_STEP_0_START//
           {
-/* GENERATED_REWRITE_RULES_STEP_0_CONTENT */
+/*! GENERATED_REWRITE_RULES_STEP_0 !*/
           }
           //GENERATED_REWRITE_RULES_STEP_0_END//
 
@@ -780,7 +796,7 @@ Lnk reduce(Worker* mem, u64 root, u64 slen) {
           switch (fun)
           //GENERATED_REWRITE_RULES_STEP_1_START//
           {
-/* GENERATED_REWRITE_RULES_STEP_1_CONTENT */
+/*! GENERATED_REWRITE_RULES_STEP_1 !*/
           }
           //GENERATED_REWRITE_RULES_STEP_1_END//
 
@@ -1250,9 +1266,6 @@ void readback_term(Stk* chrs, Worker* mem, Lnk term, Stk* vars, Stk* dirs, char*
 void readback(char* code_data, u64 code_mcap, Worker* mem, Lnk term, char** id_to_name_data, u64 id_to_name_mcap) {
   //printf("reading back\n");
 
-  // Constants
-  const u64 dirs_mcap = 65536; // max different colors we're able to readback
-
   // Used vars
   Stk seen;
   Stk chrs;
@@ -1263,9 +1276,9 @@ void readback(char* code_data, u64 code_mcap, Worker* mem, Lnk term, char** id_t
   stk_init(&seen);
   stk_init(&chrs);
   stk_init(&vars);
-  dirs = (Stk*)malloc(sizeof(Stk) * dirs_mcap);
+  dirs = (Stk*)malloc(sizeof(Stk) * DIRS_MCAP);
   assert(dirs);
-  for (u64 i = 0; i < dirs_mcap; ++i) {
+  for (u64 i = 0; i < DIRS_MCAP; ++i) {
     stk_init(&dirs[i]);
   }
 
@@ -1283,7 +1296,7 @@ void readback(char* code_data, u64 code_mcap, Worker* mem, Lnk term, char** id_t
   stk_free(&seen);
   stk_free(&chrs);
   stk_free(&vars);
-  for (u64 i = 0; i < dirs_mcap; ++i) {
+  for (u64 i = 0; i < DIRS_MCAP; ++i) {
     stk_free(&dirs[i]);
   }
 }
@@ -1312,7 +1325,7 @@ void debug_print_lnk(Lnk x) {
     case NIL: printf("NIL"); break;
     default : printf("???"); break;
   }
-  printf(":%llx:%llx", ext, val);
+  printf(":%"PRIx64":%"PRIx64"", ext, val);
 }
 
 // Main
@@ -1333,9 +1346,9 @@ int main(int argc, char* argv[]) {
   struct timeval stop, start;
 
   // Id-to-Name map
-  const u64 id_to_name_size = /* GENERATED_NAME_COUNT_CONTENT */;
+  const u64 id_to_name_size = /*! GENERATED_NAME_COUNT */ 1 /* GENERATED_NAME_COUNT !*/;
   char* id_to_name_data[id_to_name_size];
-/* GENERATED_ID_TO_NAME_DATA_CONTENT */;
+/*! GENERATED_ID_TO_NAME_DATA !*/;
 
   // Builds main term
   mem.size = 0;
@@ -1359,8 +1372,8 @@ int main(int argc, char* argv[]) {
   // Prints result statistics
   u64 delta_time = (stop.tv_sec - start.tv_sec) * 1000000 + stop.tv_usec - start.tv_usec;
   double rwt_per_sec = (double)ffi_cost / (double)delta_time;
-  printf("Rewrites: %llu (%.2f MR/s).\n", ffi_cost, rwt_per_sec);
-  printf("Mem.Size: %llu words.\n", ffi_size);
+  printf("Rewrites: %"PRIu64" (%.2f MR/s).\n", ffi_cost, rwt_per_sec);
+  printf("Mem.Size: %"PRIu64" words.\n", ffi_size);
   printf("\n");
 
   // Prints result normal form

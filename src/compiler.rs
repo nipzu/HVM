@@ -1,13 +1,15 @@
 #![allow(clippy::identity_op)]
 
+use regex::Regex;
+use std::io::Write;
+
 use crate::builder as bd;
 use crate::language as lang;
 use crate::rulebook as rb;
 use crate::runtime as rt;
-use std::io::Write;
 
-pub fn compile_code_and_save(code: &str, file_name: &str) -> std::io::Result<()> {
-  let as_clang = compile_code(code);
+pub fn compile_code_and_save(code: &str, file_name: &str, parallel: bool) -> std::io::Result<()> {
+  let as_clang = compile_code(code, parallel);
   let mut file = std::fs::OpenOptions::new()
     .read(true)
     .write(true)
@@ -18,18 +20,23 @@ pub fn compile_code_and_save(code: &str, file_name: &str) -> std::io::Result<()>
   Ok(())
 }
 
-pub fn compile_code(code: &str) -> String {
+pub fn compile_code(code: &str, parallel: bool) -> String {
   let file = lang::read_file(code);
   let book = rb::gen_rulebook(&file);
   let _funs = bd::build_runtime_functions(&book);
-  compile_book(&book)
+  compile_book(&book, parallel)
 }
 
 pub fn compile_name(name: &str) -> String {
-  str::replace(&format!("_{}_", name.to_uppercase()), ".", "$")
+  // TODO: this can still cause some name collisions.
+  // Note: avoiding the use of `$` because it is not an actually valid
+  // identifier character in C.
+  let name = name.replace("_", "__");
+  let name = name.replace(".", "_");
+  format!("_{}_", name.to_uppercase())
 }
 
-pub fn compile_book(comp: &rb::RuleBook) -> String {
+pub fn compile_book(comp: &rb::RuleBook, parallel: bool) -> String {
   let mut dups = 0;
   let mut c_ids = String::new();
   let mut inits = String::new();
@@ -44,7 +51,7 @@ pub fn compile_book(comp: &rb::RuleBook) -> String {
     line(
       &mut c_ids,
       0,
-      &format!("const u64 {} = {};", &compile_name(name), comp.name_to_id.get(name).unwrap_or(&0)),
+      &format!("#define {} ({})", &compile_name(name), comp.name_to_id.get(name).unwrap_or(&0)),
     );
 
     line(&mut inits, 6, &format!("case {}: {{", &compile_name(name)));
@@ -57,7 +64,7 @@ pub fn compile_book(comp: &rb::RuleBook) -> String {
     line(&mut codes, 6, "};");
   }
 
-  c_runtime_template(&c_ids, &inits, &codes, &id2nm, comp.id_to_name.len() as u64)
+  c_runtime_template(&c_ids, &inits, &codes, &id2nm, comp.id_to_name.len() as u64, parallel)
 }
 
 pub fn compile_func(
@@ -455,61 +462,73 @@ fn line(code: &mut String, tab: u64, line: &str) {
   code.push('\n');
 }
 
+/// String pattern that will be replaced on template C code.
+/// Syntax:
+/// ```c
+/// /*! <TAG> !*/
+/// ```
+/// or:
+/// ```c
+/// /*! <TAG> */ ... /* <TAG> !*/
+/// ```
+const REPLACEMENT_TOKEN_PATTERN: &str =
+  r"(?:/\*! *(\w+?) *!\*/)|(?:/\*! *(\w+?) *\*/.+/\* *(\w+?) *!\*/)";
+
 pub fn c_runtime_template(
   c_ids: &str,
   inits: &str,
   codes: &str,
   id2nm: &str,
   names_count: u64,
+  parallel: bool,
 ) -> String {
   const C_RUNTIME_TEMPLATE: &str = include_str!("runtime.c");
-  const C_CONSTRUCTOR_IDS_CONTENT: &str = "/* GENERATED_CONSTRUCTOR_IDS_CONTENT */";
-  const C_REWRITE_RULES_STEP_0_CONTENT: &str = "/* GENERATED_REWRITE_RULES_STEP_0_CONTENT */";
-  const C_REWRITE_RULES_STEP_1_CONTENT: &str = "/* GENERATED_REWRITE_RULES_STEP_1_CONTENT */";
-  const C_NAME_COUNT_CONTENT: &str = "/* GENERATED_NAME_COUNT_CONTENT */";
-  const C_ID_TO_NAME_DATA_CONTENT: &str = "/* GENERATED_ID_TO_NAME_DATA_CONTENT */";
-  const C_NUM_THREADS_CONTENT: &str = "/* GENERATED_NUM_THREADS_CONTENT */";
+  // Instantiate the template with the given sections' content
 
-  // Sanity checks: the generated section tokens we're looking for must be present in the runtime C
-  // file.
-  debug_assert!(
-    C_RUNTIME_TEMPLATE.contains(C_CONSTRUCTOR_IDS_CONTENT),
-    "The runtime C file is missing the constructor ids section token: {}",
-    C_CONSTRUCTOR_IDS_CONTENT
-  );
-  debug_assert!(
-    C_RUNTIME_TEMPLATE.contains(C_REWRITE_RULES_STEP_0_CONTENT),
-    "The runtime C file is missing the rewrite rules step 0 section token: {}",
-    C_REWRITE_RULES_STEP_0_CONTENT
-  );
-  debug_assert!(
-    C_RUNTIME_TEMPLATE.contains(C_REWRITE_RULES_STEP_1_CONTENT),
-    "The runtime C file is missing the rewrite rules step 1 section token: {}",
-    C_REWRITE_RULES_STEP_1_CONTENT
-  );
-  debug_assert!(
-    C_RUNTIME_TEMPLATE.contains(C_NAME_COUNT_CONTENT),
-    "The runtime C file is missing name count section token: {}",
-    C_NAME_COUNT_CONTENT
-  );
-  debug_assert!(
-    C_RUNTIME_TEMPLATE.contains(C_ID_TO_NAME_DATA_CONTENT),
-    "The runtime C file is missing the id to name data section token: {}",
-    C_ID_TO_NAME_DATA_CONTENT
-  );
-  debug_assert!(
-    C_RUNTIME_TEMPLATE.contains(C_NUM_THREADS_CONTENT),
-    "The runtime C file is missing the num threads section token: {}",
-    C_NUM_THREADS_CONTENT
-  );
+  const C_PARALLEL_FLAG_TAG: &str = "GENERATED_PARALLEL_FLAG";
+  const C_NUM_THREADS_TAG: &str = "GENERATED_NUM_THREADS";
+  const C_CONSTRUCTOR_IDS_TAG: &str = "GENERATED_CONSTRUCTOR_IDS";
+  const C_REWRITE_RULES_STEP_0_TAG: &str = "GENERATED_REWRITE_RULES_STEP_0";
+  const C_REWRITE_RULES_STEP_1_TAG: &str = "GENERATED_REWRITE_RULES_STEP_1";
+  const C_NAME_COUNT_TAG: &str = "GENERATED_NAME_COUNT";
+  const C_ID_TO_NAME_DATA_TAG: &str = "GENERATED_ID_TO_NAME_DATA";
+
+  // TODO: Sanity checks: all tokens we're looking for must be present in the
+  // `runtime.c` file.
+
+  let re = Regex::new(REPLACEMENT_TOKEN_PATTERN).unwrap();
 
   // Instantiate the template with the given sections' content
 
-  C_RUNTIME_TEMPLATE
-    .replace(C_NUM_THREADS_CONTENT, &num_cpus::get().to_string())
-    .replace(C_CONSTRUCTOR_IDS_CONTENT, c_ids)
-    .replace(C_REWRITE_RULES_STEP_0_CONTENT, inits)
-    .replace(C_REWRITE_RULES_STEP_1_CONTENT, codes)
-    .replace(C_NAME_COUNT_CONTENT, &names_count.to_string())
-    .replace(C_ID_TO_NAME_DATA_CONTENT, id2nm)
+  let result = re.replace_all(C_RUNTIME_TEMPLATE, |caps: &regex::Captures| {
+    let tag = if let Some(cap1) = caps.get(1) {
+      cap1.as_str()
+    } else if let Some(cap2) = caps.get(2) {
+      let cap2 = cap2.as_str();
+      if let Some(cap3) = caps.get(3) {
+        let cap3 = cap3.as_str();
+        debug_assert!(cap2 == cap3, "Closing block tag name must match opening tag: {}.", cap2);
+      }
+      cap2
+    } else {
+      panic!("Replacement token must have a tag.")
+    };
+
+    let parallel_flag = if parallel { "#define PARALLEL" } else { "" };
+    let num_threads = &num_cpus::get().to_string();
+    let names_count = &names_count.to_string();
+    match tag {
+      C_PARALLEL_FLAG_TAG => parallel_flag,
+      C_NUM_THREADS_TAG => num_threads,
+      C_CONSTRUCTOR_IDS_TAG => c_ids,
+      C_REWRITE_RULES_STEP_0_TAG => inits,
+      C_REWRITE_RULES_STEP_1_TAG => codes,
+      C_NAME_COUNT_TAG => names_count,
+      C_ID_TO_NAME_DATA_TAG => id2nm,
+      _ => panic!("Unknown replacement tag."),
+    }
+    .to_string()
+  });
+
+  (*result).to_string()
 }
