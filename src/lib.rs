@@ -5,7 +5,6 @@
 pub mod builder;
 pub mod compiler;
 pub mod language;
-pub mod parser;
 pub mod readback;
 pub mod rulebook;
 pub mod runtime;
@@ -28,11 +27,11 @@ mod tests {
     let code = "
     (Fn 0) = 0
     (Fn 1) = 1
-    (Fn n) = (+ (Fn (- n 1)) (Fn (- n 2)))
+    (Fn n) = (+ (Fn (   - n 1)) (Fn (- n 2)))
     (Main) = (Fn 20)
     ";
 
-    let (norm, _cost, _size, _time) = eval_code(&make_call("Main", &[]), code);
+    let (norm, _cost, _size, _time) = eval_code(&make_call("Main", &[]), code, false);
     let norm = norm.to_string();
     assert_eq!(norm, "6765");
   }

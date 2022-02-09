@@ -1,7 +1,6 @@
 mod builder;
 mod compiler;
 mod language;
-mod parser;
 mod readback;
 mod rulebook;
 mod runtime;

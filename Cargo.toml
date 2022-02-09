@@ -19,3 +19,6 @@ test = false
 
 [dependencies]
 num_cpus = "1.13"
+itertools = "0.10"
+nom = "7.1"
+nom_locate = "4.0"
